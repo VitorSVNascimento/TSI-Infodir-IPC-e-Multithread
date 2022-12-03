@@ -17,8 +17,11 @@ typedef struct{
 
 /*Efetua a abertura de um diretorio,
 */
+Infodir lerDiretorio(char *path,DIR *dir);
 int abrirDiretorio(char *path,DIR **diretorio);
 int inicializa(int argc, char* argv[]);
 int processoPai(DIR *dir,char *path);
 int processoFilho(char *path,int segmentoID);
+void inicializaStructInfodir(Infodir *infodir);
+void somaStructInfodir(Infodir *destino,Infodir recurso,char *path);
 pid_t criarProcesso();
