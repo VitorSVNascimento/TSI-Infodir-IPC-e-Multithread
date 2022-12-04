@@ -8,37 +8,34 @@
 #include <locale.h> 
 #include "infodir.h"
 
-Infodir lerDiretorio(char *path,DIR *dir){
+Infodir lerDiretorio(char *path){
+    DIR *dir;
     Diretorio *diretorio;
-    struct stat st;
     Infodir infodir,retorno;
     inicializaStructInfodir(&infodir);
-    if(abrirDiretorio(path,&dir)==FALHA){
-        infodir.numeroDeArquivos=DIRETORIO_INEXISTENTE;
+    if(abrirDiretorio(path,&dir)==FALHA)
         return infodir;
-    }else{
-        chdir(path);
-        while((diretorio = readdir(dir))){
-            if(strcmp(diretorio->d_name,"..") && strcmp(diretorio->d_name,".") ){
+    
+    chdir(path);
+    while((diretorio = readdir(dir))){
+        if(!strcmp(diretorio->d_name,"..") || !strcmp(diretorio->d_name,".") )
+            continue;
 
-                if(diretorio->d_type==DT_DIR){
-                    infodir.numeroDeSubdiretorios++;
-                    retorno = lerDiretorio(diretorio->d_name,dir);
-                    if(retorno.numeroDeArquivos!=DIRETORIO_INEXISTENTE){
-                        chdir("..");
-                        somaStructInfodir(&infodir,retorno,path);
-                        
-                    }
-                }else{
-                        stat(diretorio->d_name,&st);
-                        infodir.tamanhoEmBytes+=st.st_size;
-                        infodir.numeroDeArquivos++;
-                    
-                }
-            }
+        if(diretorio->d_type!=DT_DIR){
+            somarArquivoAStruct(&infodir,diretorio);
+            continue;
         }
-        return infodir;
+
+        infodir.numeroDeSubdiretorios++;
+        retorno = lerDiretorio(diretorio->d_name);
+        chdir("..");
+        somaStructInfodir(&infodir,retorno);
+         
+        
     }
+    closedir(dir);
+    return infodir;
+    
 }
 
 int abrirDiretorio(char *path,DIR **diretorio){
@@ -50,7 +47,7 @@ int abrirDiretorio(char *path,DIR **diretorio){
 
 }
 
-int inicializa(int argc, char* argv[]){
+int infodir(int argc, char* argv[]){
     char path[TAMANHO_MAXIMO_DO_PATH];
 DIR *dir;
     
@@ -64,7 +61,6 @@ DIR *dir;
     if(abrirDiretorio(path,&dir)==SUCESSO)
         processoPai(dir,path);
     
-    
     return EXIT_SUCCESS;
 }
 
@@ -74,69 +70,79 @@ void inicializaStructInfodir(Infodir *infodir){
     infodir->tamanhoEmBytes = 0;
 }
 
+int criaSegmentoMemoriaCompartilhada(Infodir **infodir){
+    int segmentoID = shmget(IPC_PRIVATE, sizeof(Infodir), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+    *infodir =  (Infodir *)shmat(segmentoID, NULL, 0);
+    return segmentoID;
+}
+
+void somarArquivoAStruct(Infodir *infodir,Diretorio *diretorio){
+    struct stat st;
+    stat(diretorio->d_name,&st);
+    infodir->tamanhoEmBytes+=st.st_size;
+    infodir->numeroDeArquivos++;
+    return;
+}
+
 int processoPai(DIR *dir,char *path){
+    char metodo[] = {"IPC - Interprocess Communication"};
+    
     int totalFilhos=0;
     Diretorio *diretorio;
-    struct stat st;
-    int segmentoID = shmget(IPC_PRIVATE, sizeof(Infodir), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
-    Infodir *infodirPtr = malloc(sizeof(Infodir));
-    infodirPtr= (Infodir *)shmat(segmentoID, NULL, 0);
-    inicializaStructInfodir(infodirPtr);
+    Infodir *memoriaCompartilhada = NULL;
+    int segmentoID = criaSegmentoMemoriaCompartilhada(&memoriaCompartilhada);
+    inicializaStructInfodir(memoriaCompartilhada);
    
     chdir(path);
     while((diretorio = readdir(dir))){
-        if(strcmp(diretorio->d_name,"..") && strcmp(diretorio->d_name,".") ){
+        if(!strcmp(diretorio->d_name,"..") || !strcmp(diretorio->d_name,".") )
+            continue;
 
-            if(diretorio->d_type==DT_DIR){
-                infodirPtr->numeroDeSubdiretorios++;
-                pid_t pid = criarProcesso();
-                if(!pid)
-                    processoFilho(diretorio->d_name,segmentoID);
-                else
-                    totalFilhos++;
-            }else{
-                    stat(diretorio->d_name,&st);
-                    infodirPtr->tamanhoEmBytes+=st.st_size;
-                    infodirPtr->numeroDeArquivos++;
-                
-            }
+        /*Caso o arquivo não seja um diretorio aciona a função de soma 
+        e pula para a proxima iteração do loop*/
+        if(diretorio->d_type!=DT_DIR){
+            somarArquivoAStruct(memoriaCompartilhada,diretorio); 
+            continue;
         }
+
+        memoriaCompartilhada->numeroDeSubdiretorios++;
+        pid_t pid = criarProcesso();
+        if(!pid)
+            processoFilho(diretorio->d_name,segmentoID);
+        else
+            totalFilhos++;
     }
 
+    //Espera até que todos os filhos terminem a execução para obter o relatório
     while(totalFilhos){
         wait(NULL);
         totalFilhos--;
     }
-    
-    
-    printf("\nRetorno total = %llu\n",infodirPtr->tamanhoEmBytes);
-    printf("\nSubdiretório total = %u\n",infodirPtr->numeroDeSubdiretorios);
-    printf("\nArquivos total = %u\n",infodirPtr->numeroDeArquivos);
+    getcwd(memoriaCompartilhada->nomeDir,TAMANHO_MAXIMO_DO_PATH);
+    printaRelatorio(memoriaCompartilhada,metodo);
     shmctl(segmentoID, IPC_RMID, NULL); 
-    //free(infodirPtr);
     return EXIT_SUCCESS;
 }
 
+void printaRelatorio(Infodir *infodir,char *metodo){
+
+    printf("\n-Método: %s",metodo);
+    printf("\nDiretório: %s\n",infodir->nomeDir);
+    printf("\nConteúdo do diretório");
+    printf("\n\tArquivos = %lu",infodir->numeroDeArquivos);
+    printf("\n\tSubdiretórios = %lu",infodir->numeroDeSubdiretorios);
+    printf("\n\tTamanho do diretório = %llu\n",infodir->tamanhoEmBytes);
+}
+
 int processoFilho(char *path,int segmentoID){
-    printf("\nEntrei no filho = %s\n",path);
-
-    DIR *dir;
     Infodir retorno;
-    abrirDiretorio(path,&dir);
-    //printf("\nAntes %s\n",path);
-    retorno = lerDiretorio(path,dir);
-    //printf("\nDepois %s\n",path);
-    Infodir* infodirPtr= (Infodir *)shmat(segmentoID, NULL, 0);
-    if(retorno.numeroDeArquivos!=DIRETORIO_INEXISTENTE){
-         chdir("..");
-        somaStructInfodir(infodirPtr,retorno,path);      
-    }
-   // printf("\nValor do criação %llu\n",infodirPtr->tamanhoEmBytes);
-    //printf("\nValor do infodir %llu\n",infodirPtr->tamanhoEmBytes);
-    shmdt(infodirPtr);
-
+    
+    retorno = lerDiretorio(path);
+    Infodir* memoriaCompartilhada= (Infodir *)shmat(segmentoID, NULL, 0);
+    somaStructInfodir(memoriaCompartilhada,retorno);      
+    shmdt(memoriaCompartilhada);
+    
     exit(EXIT_SUCCESS);
-    // return 0;
 }
 
 pid_t criarProcesso() {
@@ -152,12 +158,12 @@ pid_t criarProcesso() {
     return pid;
 }
 
-void somaStructInfodir(Infodir *destino,Infodir recurso,char *path){
+void somaStructInfodir(Infodir *destino,Infodir recurso){
     destino->numeroDeArquivos+=recurso.numeroDeArquivos;
     destino->numeroDeSubdiretorios+=recurso.numeroDeSubdiretorios;
     destino->tamanhoEmBytes+=recurso.tamanhoEmBytes;
 }
 
 int main(int argc, char* argv[]){
-    return inicializa(argc,argv);
+    return infodir(argc,argv);
 }
