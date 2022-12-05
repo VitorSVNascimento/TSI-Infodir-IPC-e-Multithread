@@ -64,10 +64,11 @@ DIR *dir;
         strcpy(path,argv[PRIMEIRO_PARAMETRO]);
 
     if(abrirDiretorio(path,&dir)==SUCESSO){
-        diretorioBase(dir,path,MODO_IPC);
+        lerDiretorioBase(dir,path,MODO_IPC);
         closedir(dir);  
+        getcwd(path,TAMANHO_MAXIMO_DO_PATH);
         abrirDiretorio(path,&dir);
-        diretorioBase(dir,path,MODO_THREAD);
+        lerDiretorioBase(dir,path,MODO_THREAD);
     }else
         return EXIT_FAILURE;
     
@@ -94,8 +95,8 @@ void somarArquivoAStruct(Infodir *infodir,Diretorio *diretorio){
     return;
 }
 
-int diretorioBase(DIR *dir,char *path,int modoOperacao){
-    char metodo[40]; 
+int lerDiretorioBase(DIR *dir,char *path,int modoOperacao){
+    char metodo[40],auxPath[TAMANHO_MAXIMO_DO_PATH]; 
     if(modoOperacao==MODO_IPC)
         strcpy(metodo,"IPC - Interprocess Communication");
     if(modoOperacao==MODO_THREAD)
@@ -108,6 +109,7 @@ int diretorioBase(DIR *dir,char *path,int modoOperacao){
     int segmentoID = criaSegmentoMemoriaCompartilhada(&memoriaCompartilhada);
     inicializaStructInfodir(memoriaCompartilhada);
     chdir(path);
+    getcwd(auxPath,TAMANHO_MAXIMO_DO_PATH);
     time(&tempo.tempoInicial);
     while((diretorio = readdir(dir))){
         if(!strcmp(diretorio->d_name,"..") || !strcmp(diretorio->d_name,".") )
@@ -126,6 +128,7 @@ int diretorioBase(DIR *dir,char *path,int modoOperacao){
                 if(!pid)
                     processoFilho(diretorio->d_name,segmentoID);
             }else if(modoOperacao==MODO_THREAD){
+               chdir(auxPath);
                InfodirThread infodirThread;
                infodirThread.segmentoID = segmentoID;
                strcpy(infodirThread.nomeDir,diretorio->d_name);
@@ -163,7 +166,7 @@ void printaRelatorio(Infodir *infodir,char *metodo,Tempo tempo){
     printf("\n-Tempo usando %s",metodo);
     strftime(buffer,10,"%H:%M:%S",localtime(&tempo.tempoInicial));
     printf("\n\tInício.....:%s",buffer);
-    strftime(buffer,10,"%H:%M:%S",localtime(&tempo.tempoInicial));
+    strftime(buffer,10,"%H:%M:%S",localtime(&tempo.tempoFinal));
     printf("\n\tTérmino.....:%s",buffer);
     printf("\n\tDuração: %lu segundos\n",tempo.tempoFinal-tempo.tempoInicial);
 
@@ -181,6 +184,7 @@ void lerSubdiretorioMemeriaCompartilhada(char *path,int segmentoID){
 
 int processoFilho(char *path,int segmentoID){
     lerSubdiretorioMemeriaCompartilhada(path,segmentoID);
+    //chdir("..");
     exit(EXIT_SUCCESS);
 }
 

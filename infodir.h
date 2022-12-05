@@ -59,7 +59,7 @@ int criaSegmentoMemoriaCompartilhada(Infodir **infodir);
 atribui os valores da soma a variavel *destino */
 void somaStructInfodir(Infodir *destino,Infodir recurso);
 
-int diretorioBase(DIR *dir,char *path,int modoOperacao);
+int lerDiretorioBase(DIR *dir,char *path,int modoOperacao);
 /*Printa na tela um relatório com os dados do diretório e o tempo levado para calcular estes dados
 */
 void printaRelatorio(Infodir *infodir,char *metodo,Tempo tempo);
