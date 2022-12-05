@@ -1,10 +1,14 @@
 #pragma once
+#include <time.h>
 #include <dirent.h>
 #include <sys/types.h>
+#include <threads.h>
 #define TAMANHO_MAXIMO_DO_PATH 500
 #define SUCESSO 1
 #define FALHA 0
-#define DIRETORIO_INEXISTENTE -1
+#define MODO_THREAD 1
+#define MODO_IPC 0
+#define THREAD_ERRO -1
 
 typedef struct dirent Diretorio;
 
@@ -14,6 +18,16 @@ typedef struct{
     unsigned long numeroDeSubdiretorios;
     unsigned long numeroDeArquivos;
 }Infodir;
+
+typedef struct{
+    int segmentoID;
+    char nomeDir[TAMANHO_MAXIMO_DO_PATH];
+}InfodirThread;
+
+typedef struct{
+    time_t tempoInicial;
+    time_t tempoFinal;
+}Tempo;
 
 /*Le o conteudo de um diretorio.
 Recebe como parametro uma string com o caminho para o arquivo (*path).
@@ -45,11 +59,15 @@ int criaSegmentoMemoriaCompartilhada(Infodir **infodir);
 atribui os valores da soma a variavel *destino */
 void somaStructInfodir(Infodir *destino,Infodir recurso);
 
-int processoPai(DIR *dir,char *path);
+int diretorioBase(DIR *dir,char *path,int modoOperacao);
 /*Printa na tela um relatório com os dados do diretório e o tempo levado para calcular estes dados
 */
-void printaRelatorio(Infodir *infodirPtr,char *metodo);
+void printaRelatorio(Infodir *infodir,char *metodo,Tempo tempo);
+void printarNumeroComMascara(unsigned long long numero);
+void lerSubdiretorioMemeriaCompartilhada(char *path,int segmentoID);
 int processoFilho(char *path,int segmentoID);
+int threadFilha(void *infodirThread);
+thrd_t criaThreadFilha(InfodirThread *infodirThread);
 pid_t criarProcesso();
 /*Soma o valor em bytes do arquivo passado passado por parametro a struct infodir passada por parametro*/
 void somarArquivoAStruct(Infodir *infodir,Diretorio *diretorio);

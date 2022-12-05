@@ -21,15 +21,19 @@ Infodir lerDiretorio(char *path){
         if(!strcmp(diretorio->d_name,"..") || !strcmp(diretorio->d_name,".") )
             continue;
 
-        if(diretorio->d_type!=DT_DIR){
+        if(diretorio->d_type==DT_DIR){
+            infodir.numeroDeSubdiretorios++;
+            retorno = lerDiretorio(diretorio->d_name);
+            chdir("..");
+            somaStructInfodir(&infodir,retorno);
+
+        }
+
+        if(diretorio->d_type==DT_REG){
             somarArquivoAStruct(&infodir,diretorio);
             continue;
         }
 
-        infodir.numeroDeSubdiretorios++;
-        retorno = lerDiretorio(diretorio->d_name);
-        chdir("..");
-        somaStructInfodir(&infodir,retorno);
          
         
     }
@@ -54,12 +58,18 @@ DIR *dir;
     
     const int PRIMEIRO_PARAMETRO = 1;
     if(argc <= PRIMEIRO_PARAMETRO){
-        strcpy(path,"./");
+        printf("\nVocê deve passar um diretório como argumento\n");
+        return EXIT_FAILURE;
     }else
         strcpy(path,argv[PRIMEIRO_PARAMETRO]);
 
-    if(abrirDiretorio(path,&dir)==SUCESSO)
-        processoPai(dir,path);
+    if(abrirDiretorio(path,&dir)==SUCESSO){
+        diretorioBase(dir,path,MODO_IPC);
+        closedir(dir);  
+        abrirDiretorio(path,&dir);
+        diretorioBase(dir,path,MODO_THREAD);
+    }else
+        return EXIT_FAILURE;
     
     return EXIT_SUCCESS;
 }
@@ -84,65 +94,107 @@ void somarArquivoAStruct(Infodir *infodir,Diretorio *diretorio){
     return;
 }
 
-int processoPai(DIR *dir,char *path){
-    char metodo[] = {"IPC - Interprocess Communication"};
-    
-    int totalFilhos=0;
+int diretorioBase(DIR *dir,char *path,int modoOperacao){
+    char metodo[40]; 
+    if(modoOperacao==MODO_IPC)
+        strcpy(metodo,"IPC - Interprocess Communication");
+    if(modoOperacao==MODO_THREAD)
+        strcpy(metodo,"Multi-Thread");
+    Tempo tempo;
+    unsigned int totalFilhos = 0;
     Diretorio *diretorio;
     Infodir *memoriaCompartilhada = NULL;
+    thrd_t idThread;
     int segmentoID = criaSegmentoMemoriaCompartilhada(&memoriaCompartilhada);
     inicializaStructInfodir(memoriaCompartilhada);
-   
     chdir(path);
+    time(&tempo.tempoInicial);
     while((diretorio = readdir(dir))){
         if(!strcmp(diretorio->d_name,"..") || !strcmp(diretorio->d_name,".") )
             continue;
 
         /*Caso o arquivo não seja um diretorio aciona a função de soma 
         e pula para a proxima iteração do loop*/
-        if(diretorio->d_type!=DT_DIR){
+        if(diretorio->d_type==DT_REG){
             somarArquivoAStruct(memoriaCompartilhada,diretorio); 
             continue;
         }
-
-        memoriaCompartilhada->numeroDeSubdiretorios++;
-        pid_t pid = criarProcesso();
-        if(!pid)
-            processoFilho(diretorio->d_name,segmentoID);
-        else
-            totalFilhos++;
+        if(diretorio->d_type==DT_DIR){
+            memoriaCompartilhada->numeroDeSubdiretorios++;
+            if(modoOperacao==MODO_IPC){
+                pid_t pid = criarProcesso();
+                if(!pid)
+                    processoFilho(diretorio->d_name,segmentoID);
+            }else if(modoOperacao==MODO_THREAD){
+               InfodirThread infodirThread;
+               infodirThread.segmentoID = segmentoID;
+               strcpy(infodirThread.nomeDir,diretorio->d_name);
+               idThread  = criaThreadFilha(&infodirThread);  
+               thrd_join(idThread,NULL);
+            }
+            totalFilhos++;    
+        }
+            
+        
     }
 
     //Espera até que todos os filhos terminem a execução para obter o relatório
-    while(totalFilhos){
-        wait(NULL);
-        totalFilhos--;
+    if(modoOperacao==MODO_IPC){
+        while(totalFilhos){
+            wait(NULL);
+            totalFilhos--;
+        }
     }
+    time(&tempo.tempoFinal);
     getcwd(memoriaCompartilhada->nomeDir,TAMANHO_MAXIMO_DO_PATH);
-    printaRelatorio(memoriaCompartilhada,metodo);
+    printaRelatorio(memoriaCompartilhada,metodo,tempo);
     shmctl(segmentoID, IPC_RMID, NULL); 
     return EXIT_SUCCESS;
 }
 
-void printaRelatorio(Infodir *infodir,char *metodo){
-
+void printaRelatorio(Infodir *infodir,char *metodo,Tempo tempo){
+    char buffer[10];
     printf("\n-Método: %s",metodo);
     printf("\nDiretório: %s\n",infodir->nomeDir);
-    printf("\nConteúdo do diretório");
+    printf("\n-Conteúdo do diretório");
     printf("\n\tArquivos = %lu",infodir->numeroDeArquivos);
     printf("\n\tSubdiretórios = %lu",infodir->numeroDeSubdiretorios);
     printf("\n\tTamanho do diretório = %llu\n",infodir->tamanhoEmBytes);
+    printf("\n-Tempo usando %s",metodo);
+    strftime(buffer,10,"%H:%M:%S",localtime(&tempo.tempoInicial));
+    printf("\n\tInício.....:%s",buffer);
+    strftime(buffer,10,"%H:%M:%S",localtime(&tempo.tempoInicial));
+    printf("\n\tTérmino.....:%s",buffer);
+    printf("\n\tDuração: %lu segundos\n",tempo.tempoFinal-tempo.tempoInicial);
+
 }
 
-int processoFilho(char *path,int segmentoID){
+
+void lerSubdiretorioMemeriaCompartilhada(char *path,int segmentoID){
     Infodir retorno;
-    
     retorno = lerDiretorio(path);
     Infodir* memoriaCompartilhada= (Infodir *)shmat(segmentoID, NULL, 0);
     somaStructInfodir(memoriaCompartilhada,retorno);      
     shmdt(memoriaCompartilhada);
-    
+    return;
+}
+
+int processoFilho(char *path,int segmentoID){
+    lerSubdiretorioMemeriaCompartilhada(path,segmentoID);
     exit(EXIT_SUCCESS);
+}
+
+int threadFilha(void *infodirThread){
+    InfodirThread auxInfodirThread = *(InfodirThread *)infodirThread;
+    lerSubdiretorioMemeriaCompartilhada(auxInfodirThread.nomeDir,auxInfodirThread.segmentoID);
+    chdir("..");
+    thrd_exit(0);
+}
+
+thrd_t criaThreadFilha(InfodirThread *infodirThread){
+    thrd_t threadID;
+    int status = thrd_create(&threadID,threadFilha,infodirThread); 
+    return (status == thrd_success) ? threadID : THREAD_ERRO;
 }
 
 pid_t criarProcesso() {
